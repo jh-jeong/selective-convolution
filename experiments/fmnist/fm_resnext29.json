@@ -1,0 +1,8 @@
+{
+  "dataset": "fmnist",
+
+  "model": "resnext29",
+  "model_hparams": {},
+  "num_epochs": 300,
+  "batch_size": 128
+}

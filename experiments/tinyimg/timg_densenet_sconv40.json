@@ -1,0 +1,11 @@
+{
+  "dataset": "tinyimg",
+
+  "model": "densenet_sconv40",
+  "model_hparams": {
+    "gamma": 0.001,
+    "K": 3
+  },
+  "num_epochs": 200,
+  "batch_size": 128
+}

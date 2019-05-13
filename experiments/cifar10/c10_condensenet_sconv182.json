@@ -1,0 +1,11 @@
+{
+  "dataset": "cifar10",
+
+  "model": "condensenet_sconv182",
+  "model_hparams": {
+    "gamma": 0.001,
+    "dropout_rate": 0.1
+  },
+  "num_epochs": 600,
+  "batch_size": 64
+}

@@ -1,0 +1,8 @@
+{
+  "dataset": "cifar10",
+
+  "model": "resnet164",
+  "model_hparams": {},
+  "num_epochs": 300,
+  "batch_size": 64
+}

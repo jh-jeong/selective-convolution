@@ -1,0 +1,12 @@
+{
+  "dataset": "cifar10",
+
+  "model": "resnext_sconv29",
+  "model_hparams": {
+    "gamma": 0.001,
+    "K": 3,
+    "N_max": 32
+  },
+  "num_epochs": 300,
+  "batch_size": 64
+}

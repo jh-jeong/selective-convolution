@@ -1,0 +1,129 @@
+import os
+import sys
+import pickle
+import shutil
+from datetime import datetime
+
+from tensorboardX import SummaryWriter
+import torch
+
+
+class Logger(object):
+    """Reference: https://gist.github.com/gyglim/1f8dfb1b5c82627ae3efcfbbadb9f514"""
+    def __init__(self, log_dir, ask=True):
+        if not os.path.exists("./logs/"):
+            os.mkdir("./logs/")
+        if not os.path.exists(log_dir):
+            os.mkdir(log_dir)
+
+        if len(os.listdir(log_dir)) != 0 and ask:
+            ans = input("log_dir is not empty. All data inside log_dir will be deleted. "
+                            "Will you proceed [y/N]? ")
+            if ans in ['y', 'Y']:
+                shutil.rmtree(log_dir)
+            else:
+                exit(1)
+        self.writer = SummaryWriter(log_dir)
+        self.log_file = open(os.path.join(log_dir, 'log.txt'), 'w')
+
+    def log(self, string):
+        self.log_file.write('[%s] %s' % (datetime.now(), string) + '\n')
+        self.log_file.flush()
+
+        print('[%s] %s' % (datetime.now(), string))
+        sys.stdout.flush()
+
+    def scalar_summary(self, tag, value, step):
+        """Log a scalar variable."""
+        self.writer.add_scalar(tag, value, step)
+
+    def image_summary(self, tag, images, step):
+        """Log a list of images."""
+        self.writer.add_image(tag, images, step)
+
+    def histo_summary(self, tag, values, step):
+        """Log a histogram of the tensor of values."""
+        self.writer.add_histogram(tag, values, step, bins='auto')
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value."""
+    def __init__(self):
+        self.value = 0
+        self.average = 0
+        self.sum = 0
+        self.count = 0
+
+    def reset(self):
+        self.value = 0
+        self.average = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, value, n=1):
+        self.value = value
+        self.sum += value * n
+        self.count += n
+        self.average = self.sum / self.count
+
+
+def error_k(output, target, ks=(1,)):
+    """Computes the precision@k for the specified values of k."""
+    maxk = max(ks)
+    batch_size = target.size(0)
+
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    results = []
+    for k in ks:
+        correct_k = correct[:k].view(-1).float().sum(0)
+        results.append(100.0 - correct_k.mul_(100.0 / batch_size))
+    return results
+
+
+def load_checkpoint(logdir, mode='last'):
+    if mode == 'last':
+        model_path = os.path.join(logdir, 'last.model')
+        optim_path = os.path.join(logdir, 'last.optim')
+        config_path = os.path.join(logdir, 'last.config')
+    elif mode == 'best':
+        model_path = os.path.join(logdir, 'best.model')
+        optim_path = os.path.join(logdir, 'best.optim')
+        config_path = os.path.join(logdir, 'best.config')
+    else:
+        raise NotImplementedError()
+
+    if os.path.exists(model_path):
+        model_state = torch.load(model_path)
+        optim_state = torch.load(optim_path)
+        with open(config_path, 'rb') as handle:
+            cfg = pickle.load(handle)
+    else:
+        return None, None, None
+    print("=> Loading checkpoint from '{}'".format(logdir))
+    return model_state, optim_state, cfg
+
+
+def save_checkpoint(epoch, args, best, model_state, optim_state, logdir, is_best):
+    last_model = os.path.join(logdir, 'last.model')
+    best_model = os.path.join(logdir, 'best.model')
+    last_optim = os.path.join(logdir, 'last.optim')
+    best_optim = os.path.join(logdir, 'best.optim')
+    last_config = os.path.join(logdir, 'last.config')
+    best_config = os.path.join(logdir, 'best.config')
+
+    opt = {
+        'epoch': epoch,
+        'args': args,
+        'best': best
+    }
+    torch.save(model_state, last_model)
+    torch.save(optim_state, last_optim)
+    with open(last_config, 'wb') as handle:
+        pickle.dump(opt, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    if is_best:
+        shutil.copyfile(last_model, best_model)
+        shutil.copyfile(last_optim, best_optim)
+        shutil.copyfile(last_config, best_config)
