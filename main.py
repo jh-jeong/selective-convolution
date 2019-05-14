@@ -10,17 +10,44 @@ import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import torch.optim
-import numpy as np
 
 import models
 from datasets import get_dataset
 from utils import Logger
 from utils import AverageMeter
-from utils import error_k
 from utils import save_checkpoint
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+cudnn.benchmark = True
+
+
+def update_learning_rate(optimizer, epoch, args, cur_batch, num_batches):
+    lr_init = args.get('lr_init', 0.1)
+    num_epochs = args['num_epochs']
+
+    T_total = num_epochs * num_batches
+    T_cur = (epoch % num_epochs) * num_batches + cur_batch
+    lr = 0.5 * lr_init * (1 + math.cos(math.pi * T_cur / T_total))
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+    return lr
+
+
+def error_k(output, target, ks=(1,)):
+    """Computes the precision@k for the specified values of k"""
+    max_k = max(ks)
+    batch_size = target.size(0)
+
+    _, pred = output.topk(max_k, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    results = []
+    for k in ks:
+        correct_k = correct[:k].view(-1).float().sum(0)
+        results.append(100.0 - correct_k.mul_(100.0 / batch_size))
+    return results
 
 
 def train(epoch, model, criterion, optimizer, dataloader, logger, args):
@@ -32,27 +59,17 @@ def train(epoch, model, criterion, optimizer, dataloader, logger, args):
 
     # Switch to train mode
     model.train()
-
     num_batches = len(dataloader)
-    start = time.time()
+    check = time.time()
     for n, (images, labels) in enumerate(dataloader):
+        images, labels = images.to(device), labels.to(device)
+        data_time.update(time.time() - check)
+
         lr = update_learning_rate(optimizer, epoch, args, n, num_batches)
 
-        # Measure data loading time
-        data_time.update(time.time() - start)
-
-        images = images.to(device)
-        labels = labels.to(device)
-
+        check = time.time()
         outputs = model(images)
         loss = criterion(outputs, labels)
-
-        # Measure accuracy and record loss
-        top1, top5 = error_k(outputs.data, labels, ks=(1, 5))
-        batch_size = images.size(0)
-        losses.update(loss.item(), batch_size)
-        error_top1.update(top1.item(), batch_size)
-        error_top5.update(top5.item(), batch_size)
 
         # Compute gradient and do SGD step
         model.zero_grad()
@@ -61,12 +78,19 @@ def train(epoch, model, criterion, optimizer, dataloader, logger, args):
         optimizer.step()
 
         # Measure elapsed time
-        batch_time.update(time.time() - start)
-        start = time.time()
+        batch_time.update(time.time() - check)
+
+        # Measure accuracy and record loss
+        top1, top5 = error_k(outputs.data, labels, ks=(1, 5))
+        batch_size = images.size(0)
+        losses.update(loss.item(), batch_size)
+        error_top1.update(top1.item(), batch_size)
+        error_top5.update(top5.item(), batch_size)
 
         if n % 10 == 0:
             logger.log('[Epoch %3d; %3d] [Time %.3f] [Data %.3f] [Loss %f] [LR %.3f]' %
                        (epoch, n, batch_time.value, data_time.value, losses.value, lr))
+        check = time.time()
 
     logger.log('[DONE] [Time %.3f] [Data %.3f] [Loss %f] [Train@1 %.3f] [Train@5 %.3f]' %
                (batch_time.average, data_time.average, losses.average,
@@ -84,24 +108,24 @@ def test(epoch, model, criterion, dataloader, logger=None):
 
     # Switch to eval mode
     model.eval()
-
-    start = time.time()
     with torch.no_grad():
         for n, (images, labels) in enumerate(dataloader):
             images, labels = images.to(device), labels.to(device)
+
+            check = time.time()
             outputs = model(images)
             loss = criterion(outputs, labels)
 
+            # Measure elapsed time
+            batch_time.update(time.time() - check)
+
             # Measure accuracy and record loss
             top1, top5 = error_k(outputs.data, labels, ks=(1, 5))
+
             batch_size = images.size(0)
             losses.update(loss.item(), batch_size)
             error_top1.update(top1.item(), batch_size)
             error_top5.update(top5.item(), batch_size)
-
-            # Measure elapsed time
-            batch_time.update(time.time() - start)
-            start = time.time()
 
             if n % 10 == 0:
                 if logger:
@@ -121,19 +145,9 @@ def test(epoch, model, criterion, dataloader, logger=None):
     return error_top1.average
 
 
-def update_learning_rate(optimizer, epoch, args, cur_batch, num_batches):
-    lr_init = args.get('lr_init', 0.1)
-    num_epochs = args['num_epochs']
+def main(args, fn):
+    logger = Logger(fn)
 
-    T_total = num_epochs * num_batches
-    T_cur = (epoch % num_epochs) * num_batches + cur_batch
-    lr = 0.5 * lr_init * (1 + math.cos(math.pi * T_cur / T_total))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-    return lr
-
-
-def main(args):
     hparams = args['model_hparams']
     if args['dataset'] in ['cifar10', 'fmnist']:
         hparams['n_classes'] = 10
@@ -143,11 +157,8 @@ def main(args):
         hparams['n_classes'] = 200
     elif args['dataset'] == 'imagenet':
         hparams['n_classes'] = 1000
+    logger.log(args)
     hparams['dataset'] = args['dataset']
-
-    # Set logdir
-    logdir = 'logs/' + args['logdir'] + '_' + str(np.random.randint(10000))
-    logger = Logger(logdir)
 
     model = models.__dict__[args['model']](hparams)
     logger.log(model)
@@ -165,21 +176,18 @@ def main(args):
 
     # Configure parameters to optimize
     pg_normal = []
-    for m in model.modules():
-        if type(m).__name__ in ['Conv2d', 'Linear']:
-            pg_normal.append(m.weight)
-            if m.bias is not None:
-                pg_normal.append(m.bias)
-        elif type(m).__name__ in ['BatchNorm2d']:
-            if m.weight is not None:
-                pg_normal.append(m.weight)
-            if m.bias is not None:
-                pg_normal.append(m.bias)
     pg_small = []
-    for m in model.modules():
-        if type(m).__name__ in ['SelectiveConv2d']:
-            if m._bias is not None:
-                pg_small.append(m._bias)
+
+    for p in model.parameters():
+        if not p.requires_grad:
+            continue
+        elif hasattr(p, 'wd_small') and p.wd_small:
+            pg_small.append(p)
+        else:
+            pg_normal.append(p)
+
+    print(pg_small)
+
     params = [
         {'params': pg_normal, 'weight_decay': 1e-4},
         {'params': pg_small, 'weight_decay': 1e-5}
@@ -227,19 +235,18 @@ def main(args):
             best = error
         save_checkpoint(epoch, args, best,
                         save_states, optimizer.state_dict(),
-                        logdir, is_best)
-        logger.scalar_summary('best', best * 0.01, epoch)
+                        logger.logdir, is_best)
+        logger.scalar_summary('best', best, epoch)
         logger.log('[Epoch %3d] [Test %5.2f] [Best %5.2f]' % (epoch, error, best))
 
 
 if __name__ == '__main__':
-    with open(sys.argv[1]) as f:
-        config = f.read()
+    config_path = sys.argv[1]
+    with open(config_path) as file:
+        config = file.read()
         print(config)
         args = json.loads(config)
+    config_fn = os.path.split(config_path)[-1].split('.')[0]
 
-    logdir = os.path.split(sys.argv[1])[-1].split('.')[0]
-    args['logdir'] = logdir
-    cudnn.benchmark = True
-    main(args)
+    main(args, config_fn)
 

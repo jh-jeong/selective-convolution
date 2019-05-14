@@ -4,27 +4,39 @@ import pickle
 import shutil
 from datetime import datetime
 
+import numpy as np
 from tensorboardX import SummaryWriter
 import torch
 
 
 class Logger(object):
     """Reference: https://gist.github.com/gyglim/1f8dfb1b5c82627ae3efcfbbadb9f514"""
-    def __init__(self, log_dir, ask=True):
+    def __init__(self, fn):
         if not os.path.exists("./logs/"):
             os.mkdir("./logs/")
-        if not os.path.exists(log_dir):
-            os.mkdir(log_dir)
 
-        if len(os.listdir(log_dir)) != 0 and ask:
+        logdir = self._make_dir(fn)
+        if not os.path.exists(logdir):
+            os.mkdir(logdir)
+        if len(os.listdir(logdir)) != 0:
             ans = input("log_dir is not empty. All data inside log_dir will be deleted. "
                             "Will you proceed [y/N]? ")
             if ans in ['y', 'Y']:
-                shutil.rmtree(log_dir)
+                shutil.rmtree(logdir)
             else:
                 exit(1)
-        self.writer = SummaryWriter(log_dir)
-        self.log_file = open(os.path.join(log_dir, 'log.txt'), 'w')
+        self.set_dir(logdir)
+
+    def _make_dir(self, fn):
+        logdir = 'logs/' + fn + '_' + str(np.random.randint(10000))
+        return logdir
+
+    def set_dir(self, logdir, log_fn='log.txt'):
+        self.logdir = logdir
+        if not os.path.exists(logdir):
+            os.mkdir(logdir)
+        self.writer = SummaryWriter(logdir)
+        self.log_file = open(os.path.join(logdir, log_fn), 'a')
 
     def log(self, string):
         self.log_file.write('[%s] %s' % (datetime.now(), string) + '\n')
@@ -65,22 +77,6 @@ class AverageMeter(object):
         self.sum += value * n
         self.count += n
         self.average = self.sum / self.count
-
-
-def error_k(output, target, ks=(1,)):
-    """Computes the precision@k for the specified values of k."""
-    maxk = max(ks)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    results = []
-    for k in ks:
-        correct_k = correct[:k].view(-1).float().sum(0)
-        results.append(100.0 - correct_k.mul_(100.0 / batch_size))
-    return results
 
 
 def load_checkpoint(logdir, mode='last'):

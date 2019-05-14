@@ -40,7 +40,7 @@ class _DenseBlock(nn.Sequential):
 
 
 class _Transition(nn.Module):
-    def __init__(self, in_channels, out_channels, args):
+    def __init__(self, args, in_channels, out_channels):
         super(_Transition, self).__init__()
         if in_channels != out_channels:
             if args.get('use_sconv', False):
@@ -110,9 +110,8 @@ class DenseNet(nn.Module):
             self.features.add_module('block%d' % (i + 1), block)
             n_channels = n_channels + n_layers * self.growth_rate
             if i != len(self.block_config) - 1:
-                trans = _Transition(in_channels=n_channels,
-                                    out_channels=int(n_channels * self.compression),
-                                    args=self.layer_args)
+                trans = _Transition(args=args, in_channels=n_channels,
+                                    out_channels=int(n_channels * self.compression))
                 self.features.add_module('trans%d' % (i + 1), trans)
                 n_channels = int(n_channels * self.compression)
 
