@@ -186,8 +186,6 @@ def main(args, fn):
         else:
             pg_normal.append(p)
 
-    print(pg_small)
-
     params = [
         {'params': pg_normal, 'weight_decay': 1e-4},
         {'params': pg_small, 'weight_decay': 1e-5}

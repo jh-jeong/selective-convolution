@@ -34,6 +34,7 @@ class SelectiveConv2d(nn.Module):
 
             self.register_buffer('_ind_ptr', _ind_ptr)
             self._bias = nn.Parameter(_bias)
+            self._bias.wd_small = True
 
             _eye = torch.eye(2, 3)
             self.register_buffer('_eye', _eye)
